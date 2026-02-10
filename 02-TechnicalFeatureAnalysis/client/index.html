@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BOTracle - 기술적 특징 분석 데모</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; padding: 40px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 8px; }
+        .subtitle { color: #666; margin-bottom: 30px; }
+        .card {
+            background: white; border-radius: 8px; padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px;
+        }
+        .card h2 { color: #444; margin-bottom: 16px; font-size: 18px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; }
+        th { color: #888; font-weight: 600; font-size: 13px; text-transform: uppercase; }
+        td { font-family: monospace; font-size: 14px; }
+        .feature-name { color: #333; font-weight: 500; }
+        .feature-value { color: #0066cc; }
+        .importance { color: #999; font-size: 12px; }
+        button {
+            background: #0066cc; color: white; border: none; padding: 12px 24px;
+            border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 10px;
+        }
+        button:hover { background: #0052a3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .result { margin-top: 16px; padding: 16px; border-radius: 6px; display: none; }
+        .result.bot { background: #fee; border: 1px solid #fcc; }
+        .result.human { background: #efe; border: 1px solid #cfc; }
+        .result.error { background: #fff3e0; border: 1px solid #ffe0b2; }
+        .flags { display: flex; gap: 6px; flex-wrap: wrap; }
+        .flag {
+            background: #fee; color: #c00; padding: 2px 8px;
+            border-radius: 4px; font-size: 12px;
+        }
+        .flag.safe { background: #efe; color: #060; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BOTracle 2단계: 기술적 특징 분석</h1>
+        <p class="subtitle">브라우저에서 수집한 기술적 특징을 SGAN 모델로 분석합니다</p>
+
+        <!-- 수집된 특징 표시 -->
+        <div class="card">
+            <h2>수집된 기술적 특징</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>특징</th>
+                        <th>값</th>
+                        <th>중요도</th>
+                    </tr>
+                </thead>
+                <tbody id="featureTable"></tbody>
+            </table>
+        </div>
+
+        <!-- 자동화 탐지 결과 -->
+        <div class="card">
+            <h2>자동화 도구 탐지</h2>
+            <div id="automationFlags" class="flags"></div>
+        </div>
+
+        <!-- 서버 분석 -->
+        <div class="card">
+            <h2>SGAN 분석</h2>
+            <p style="color:#666; margin-bottom:12px;">
+                수집된 특징을 서버로 전송하여 SGAN 모델로 봇/사람을 판별합니다.
+            </p>
+            <button id="analyzeBtn" onclick="analyze()">서버로 전송하여 분석</button>
+            <div id="result" class="result"></div>
+        </div>
+    </div>
+
+    <script src="feature_extractor.js"></script>
+    <script>
+        const extractor = new TechnicalFeatureExtractor('http://localhost:5000/api/analyze');
+        const features = extractor.extractFeatures();
+
+        // 특징 테이블 렌더링
+        const importanceMap = {
+            'browser_height': 'R²=0.542 (1위)',
+            'browser_width': 'R²=0.287 (2위)',
+            'java_enabled': 'R²=0.082 (3위)',
+            'user_agent': 'R²=0.024 (5위)',
+            'webdriver': '자동화 탐지',
+        };
+
+        const tbody = document.getElementById('featureTable');
+        for (const [key, value] of Object.entries(features)) {
+            if (key === 'automation_flags' || key === 'timestamp') continue;
+            const tr = document.createElement('tr');
+            const displayValue = typeof value === 'string' && value.length > 60
+                ? value.substring(0, 60) + '...'
+                : String(value);
+            tr.innerHTML = `
+                <td class="feature-name">${key}</td>
+                <td class="feature-value">${displayValue}</td>
+                <td class="importance">${importanceMap[key] || ''}</td>
+            `;
+            tbody.appendChild(tr);
+        }
+
+        // 자동화 플래그 렌더링
+        const flagsDiv = document.getElementById('automationFlags');
+        if (features.automation_flags.length === 0) {
+            flagsDiv.innerHTML = '<span class="flag safe">자동화 도구 미탐지</span>';
+        } else {
+            features.automation_flags.forEach(flag => {
+                flagsDiv.innerHTML += `<span class="flag">${flag}</span>`;
+            });
+        }
+
+        // 서버 분석
+        async function analyze() {
+            const btn = document.getElementById('analyzeBtn');
+            const resultDiv = document.getElementById('result');
+            btn.disabled = true;
+            btn.textContent = '분석 중...';
+
+            const result = await extractor.sendToServer();
+            resultDiv.style.display = 'block';
+
+            if (!result) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <strong>서버 연결 실패</strong><br>
+                    서버가 실행 중인지 확인하세요: <code>python server/app.py</code>
+                `;
+            } else {
+                const isBot = result.prediction === 'bot';
+                resultDiv.className = `result ${isBot ? 'bot' : 'human'}`;
+                resultDiv.innerHTML = `
+                    <strong>판정: ${isBot ? '봇 (Bot)' : '사람 (Human)'}</strong><br>
+                    신뢰도: ${(result.confidence * 100).toFixed(1)}%<br>
+                    임계값 λ 초과: ${result.above_threshold ? '예 (최종 판정)' : '아니오 (3단계로 전달)'}
+                `;
+            }
+            btn.disabled = false;
+            btn.textContent = '다시 분석';
+        }
+    </script>
+</body>
+</html>
