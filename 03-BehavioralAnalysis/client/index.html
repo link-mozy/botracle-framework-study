@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BOTracle - 행위 기반 분석 데모</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 8px; }
+        .subtitle { color: #666; margin-bottom: 20px; }
+        .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card {
+            background: white; border-radius: 8px; padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px;
+        }
+        .card h2 { color: #444; margin-bottom: 12px; font-size: 16px; }
+        .full-width { grid-column: 1 / -1; }
+
+        /* 네비게이션 시뮬레이터 */
+        .nav-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+        .nav-btn {
+            padding: 10px 8px; border: 2px solid #e0e0e0; border-radius: 6px;
+            background: white; cursor: pointer; text-align: center; transition: all 0.2s;
+            font-size: 13px;
+        }
+        .nav-btn:hover { border-color: #0066cc; background: #f0f7ff; }
+        .nav-btn.active { border-color: #0066cc; background: #e3f0ff; font-weight: 600; }
+        .nav-btn .type { font-size: 10px; color: #999; display: block; margin-top: 2px; }
+
+        /* 그래프 상태 */
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+        .stat-box {
+            text-align: center; padding: 10px; background: #f8f9fa; border-radius: 6px;
+        }
+        .stat-value { font-size: 24px; font-weight: 700; color: #0066cc; }
+        .stat-label { font-size: 11px; color: #888; margin-top: 2px; }
+
+        /* 히트 로그 */
+        .hit-log {
+            max-height: 200px; overflow-y: auto; font-family: monospace;
+            font-size: 12px; background: #f8f9fa; border-radius: 6px; padding: 10px;
+        }
+        .hit-entry { padding: 3px 0; border-bottom: 1px solid #eee; }
+        .hit-entry .arrow { color: #0066cc; }
+
+        /* 그래프 시각화 */
+        .graph-viz {
+            min-height: 180px; background: #fafafa; border-radius: 6px;
+            padding: 12px; font-family: monospace; font-size: 12px;
+            white-space: pre-wrap; overflow: auto; line-height: 1.4;
+        }
+
+        /* 버튼 */
+        button {
+            background: #0066cc; color: white; border: none; padding: 10px 20px;
+            border-radius: 6px; font-size: 14px; cursor: pointer; margin-right: 8px;
+            margin-top: 8px;
+        }
+        button:hover { background: #0052a3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        button.danger { background: #cc3300; }
+        button.danger:hover { background: #aa2200; }
+        button.secondary { background: #666; }
+        button.secondary:hover { background: #555; }
+
+        /* 결과 */
+        .result { margin-top: 12px; padding: 14px; border-radius: 6px; display: none; }
+        .result.bot { background: #fee; border: 1px solid #fcc; }
+        .result.human { background: #efe; border: 1px solid #cfc; }
+        .result.error { background: #fff3e0; border: 1px solid #ffe0b2; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BOTracle 3단계: 행위 기반 분석</h1>
+        <p class="subtitle">
+            웹사이트 탐색 패턴(WT Graph)을 수집하고 DGCNN으로 봇/사람을 판별합니다
+        </p>
+
+        <div class="layout">
+            <!-- 왼쪽: 쇼핑몰 네비게이션 시뮬레이터 -->
+            <div>
+                <div class="card">
+                    <h2>가상 쇼핑몰 탐색 시뮬레이터</h2>
+                    <p style="color:#666; font-size:13px; margin-bottom:12px;">
+                        아래 페이지를 클릭하여 사람의 탐색 행동을 재현하세요.
+                        클릭할 때마다 서버로 hit 데이터가 전송됩니다.
+                    </p>
+                    <div class="nav-grid" id="navGrid"></div>
+                </div>
+
+                <div class="card">
+                    <h2>봇 시뮬레이션</h2>
+                    <p style="color:#666; font-size:13px; margin-bottom:8px;">
+                        봇의 체계적 크롤링 패턴을 자동으로 재현합니다.
+                    </p>
+                    <button class="danger" onclick="simulateBot()">
+                        봇 패턴 시뮬레이션
+                    </button>
+                    <button class="secondary" onclick="resetSession()">
+                        세션 초기화
+                    </button>
+                </div>
+
+                <div class="card">
+                    <h2>DGCNN 분석</h2>
+                    <p style="color:#666; font-size:13px; margin-bottom:8px;">
+                        현재 세션의 WT Graph를 서버로 전송하여 봇/사람을 판별합니다.
+                    </p>
+                    <button id="analyzeBtn" onclick="analyze()">
+                        세션 분석 요청
+                    </button>
+                    <div id="result" class="result"></div>
+                </div>
+            </div>
+
+            <!-- 오른쪽: 그래프 상태 + 로그 -->
+            <div>
+                <div class="card">
+                    <h2>WT Graph 상태</h2>
+                    <div class="stats">
+                        <div class="stat-box">
+                            <div class="stat-value" id="statNodes">0</div>
+                            <div class="stat-label">노드 수</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="statEdges">0</div>
+                            <div class="stat-label">엣지 수</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="statHits">0</div>
+                            <div class="stat-label">총 히트</div>
+                        </div>
+                    </div>
+                    <div class="graph-viz" id="graphViz">
+아직 탐색 기록이 없습니다.
+페이지를 클릭하여 WT Graph를 구성하세요.</div>
+                </div>
+
+                <div class="card">
+                    <h2>히트 로그</h2>
+                    <div class="hit-log" id="hitLog">
+                        <div style="color:#999;">페이지를 클릭하면 여기에 기록됩니다.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 세션 정보 -->
+        <div class="card full-width" style="margin-top:16px;">
+            <h2>세션 정보</h2>
+            <p style="font-family:monospace; font-size:13px; color:#666;">
+                Session ID: <span id="sessionIdDisplay">-</span>
+            </p>
+        </div>
+    </div>
+
+    <script src="wt_graph_collector.js"></script>
+    <script>
+        // ══════════════════════════════════════════════
+        // 초기화
+        // ══════════════════════════════════════════════
+
+        const collector = new WTGraphCollector('http://localhost:5001/api/hit');
+        document.getElementById('sessionIdDisplay').textContent = collector.getSessionId();
+
+        // 가상 쇼핑몰 페이지 목록
+        const PAGES = [
+            { name: 'home', type: 'home', title: 'Welcome to TechShop', label: '홈' },
+            { name: 'category/electronics', type: 'category', title: 'Electronics & Gadgets', label: '전자제품' },
+            { name: 'category/clothing', type: 'category', title: 'Fashion & Clothing', label: '의류' },
+            { name: 'category/books', type: 'category', title: 'Books & Education', label: '도서' },
+            { name: 'product/laptop-pro', type: 'product', title: 'Premium Laptop Pro', label: '노트북 Pro' },
+            { name: 'product/phone-x', type: 'product', title: 'Smartphone X Ultra', label: '스마트폰 X' },
+            { name: 'product/headphones', type: 'product', title: 'Wireless Headphones', label: '헤드폰' },
+            { name: 'product/tshirt-basic', type: 'product', title: 'Basic Cotton T-Shirt', label: '티셔츠' },
+            { name: 'product/python-book', type: 'product', title: 'Python Programming Guide', label: 'Python 책' },
+            { name: 'product/tablet-lite', type: 'product', title: 'Tablet Lite 10-inch', label: '태블릿' },
+            { name: 'search', type: 'search', title: 'Search Results', label: '검색' },
+            { name: 'cart', type: 'cart', title: 'Shopping Cart', label: '장바구니' },
+            { name: 'checkout', type: 'checkout', title: 'Secure Checkout', label: '결제' },
+            { name: 'account', type: 'account', title: 'My Account', label: '내 계정' },
+        ];
+
+        // 로컬 그래프 상태 추적
+        let localNodes = new Set();
+        let localEdges = new Map(); // "source->target" => weight
+        let currentPage = null;
+
+        // ══════════════════════════════════════════════
+        // 네비게이션 그리드 렌더링
+        // ══════════════════════════════════════════════
+
+        const navGrid = document.getElementById('navGrid');
+        PAGES.forEach(page => {
+            const btn = document.createElement('div');
+            btn.className = 'nav-btn';
+            btn.id = `nav-${page.name.replace(/\//g, '-')}`;
+            btn.innerHTML = `${page.label}<span class="type">${page.type}</span>`;
+            btn.onclick = () => visitPage(page);
+            navGrid.appendChild(btn);
+        });
+
+        // ══════════════════════════════════════════════
+        // 페이지 방문 처리
+        // ══════════════════════════════════════════════
+
+        async function visitPage(page) {
+            // 활성 버튼 업데이트
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            const btnId = `nav-${page.name.replace(/\//g, '-')}`;
+            document.getElementById(btnId).classList.add('active');
+
+            // 로컬 그래프 상태 업데이트
+            const prevPage = currentPage;
+            currentPage = page.name;
+            localNodes.add(page.name);
+
+            if (prevPage) {
+                const edgeKey = `${prevPage}->${page.name}`;
+                localEdges.set(edgeKey, (localEdges.get(edgeKey) || 0) + 1);
+            }
+
+            // 서버로 히트 전송
+            const result = await collector.recordHit(page.name, page.type, page.title);
+
+            // UI 업데이트
+            updateStats(result);
+            updateHitLog(prevPage, page);
+            updateGraphViz();
+        }
+
+        // ══════════════════════════════════════════════
+        // UI 업데이트 함수들
+        // ══════════════════════════════════════════════
+
+        function updateStats(serverResult) {
+            if (serverResult && serverResult.graph_summary) {
+                const s = serverResult.graph_summary;
+                document.getElementById('statNodes').textContent = s.node_count;
+                document.getElementById('statEdges').textContent = s.edge_count;
+                document.getElementById('statHits').textContent = s.total_hits;
+            } else {
+                // 서버 연결 실패 시 로컬 상태 사용
+                document.getElementById('statNodes').textContent = localNodes.size;
+                document.getElementById('statEdges').textContent = localEdges.size;
+                document.getElementById('statHits').textContent = collector.hitCount;
+            }
+        }
+
+        function updateHitLog(prevPage, page) {
+            const log = document.getElementById('hitLog');
+            if (collector.hitCount === 1) {
+                log.innerHTML = ''; // 첫 기록 시 플레이스홀더 제거
+            }
+            const entry = document.createElement('div');
+            entry.className = 'hit-entry';
+            const time = new Date().toLocaleTimeString();
+            if (prevPage) {
+                entry.innerHTML = `<span style="color:#999">[${time}]</span> ${prevPage} <span class="arrow">→</span> ${page.name} <span style="color:#999">(${page.type})</span>`;
+            } else {
+                entry.innerHTML = `<span style="color:#999">[${time}]</span> <span class="arrow">●</span> ${page.name} <span style="color:#999">(시작)</span>`;
+            }
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function updateGraphViz() {
+            const viz = document.getElementById('graphViz');
+            let text = '=== WT Graph ===\n\n';
+
+            // 노드 목록
+            text += `노드 (${localNodes.size}개):\n`;
+            localNodes.forEach(n => {
+                const hitCount = collector.hitLog.filter(h => h.detailedPagename === n).length;
+                text += `  [${n}] (${hitCount}회 방문)\n`;
+            });
+
+            // 엣지 목록
+            text += `\n엣지 (${localEdges.size}개):\n`;
+            localEdges.forEach((weight, key) => {
+                const [src, tgt] = key.split('->');
+                text += `  ${src} → ${tgt} (가중치: ${weight})\n`;
+            });
+
+            viz.textContent = text;
+        }
+
+        // ══════════════════════════════════════════════
+        // 봇 시뮬레이션
+        // ══════════════════════════════════════════════
+
+        async function simulateBot() {
+            const btn = document.querySelector('.danger');
+            btn.disabled = true;
+            btn.textContent = '봇 시뮬레이션 중...';
+
+            // Type A 봇: 모든 페이지를 빠르게 순서대로 방문
+            for (const page of PAGES) {
+                await visitPage(page);
+                // 봇의 빠른 간격 시뮬레이션 (200ms)
+                await new Promise(r => setTimeout(r, 200));
+            }
+
+            btn.disabled = false;
+            btn.textContent = '봇 패턴 시뮬레이션';
+        }
+
+        // ══════════════════════════════════════════════
+        // 세션 초기화
+        // ══════════════════════════════════════════════
+
+        function resetSession() {
+            // 새 수집기 생성
+            window.location.reload();
+        }
+
+        // ══════════════════════════════════════════════
+        // DGCNN 분석
+        // ══════════════════════════════════════════════
+
+        async function analyze() {
+            const btn = document.getElementById('analyzeBtn');
+            const resultDiv = document.getElementById('result');
+
+            if (collector.hitCount === 0) {
+                resultDiv.style.display = 'block';
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = '<strong>탐색 기록이 없습니다.</strong><br>먼저 페이지를 클릭하여 탐색하세요.';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '분석 중...';
+
+            const result = await collector.requestAnalysis();
+            resultDiv.style.display = 'block';
+
+            if (!result || result.error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <strong>서버 연결 실패</strong><br>
+                    ${result ? result.error : '서버가 실행 중인지 확인하세요:'}<br>
+                    <code>cd 03-BehavioralAnalysis && python server/app.py</code>
+                `;
+            } else {
+                const isBot = result.prediction === 'bot';
+                resultDiv.className = `result ${isBot ? 'bot' : 'human'}`;
+
+                let metricsHtml = '';
+                if (result.details && result.details.metrics) {
+                    const m = result.details.metrics;
+                    metricsHtml = `<br><br><strong>그래프 메트릭:</strong><br>`;
+                    metricsHtml += `  노드: ${m.node_count}, 엣지: ${m.edge_count}, 총 히트: ${m.total_hits}<br>`;
+                    if (m.session_topics && m.session_topics.length > 0) {
+                        metricsHtml += `  세션 토픽: ${m.session_topics.slice(0, 5).join(', ')}<br>`;
+                    }
+                }
+
+                resultDiv.innerHTML = `
+                    <strong>판정: ${isBot ? '봇 (Bot)' : '사람 (Human)'}</strong><br>
+                    신뢰도: ${(result.confidence * 100).toFixed(1)}%<br>
+                    임계값 λ 초과: ${result.above_threshold ? '예 (최종 판정)' : '아니오 (추가 히트 필요)'}
+                    ${metricsHtml}
+                `;
+            }
+
+            btn.disabled = false;
+            btn.textContent = '다시 분석';
+        }
+    </script>
+</body>
+</html>
